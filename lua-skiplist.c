@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -19,26 +20,66 @@ _to_skiplist(lua_State *L) {
     return *sl;
 }
 
+int _L_comp_mm(void* ud, slobj* p1, slobj* p2) {
+    lua_State* L = (lua_State*) ud;
+    lua_pushvalue(L, -1);
+    lua_pushlstring(L, p1->ptr, p1->length);
+    lua_pushlstring(L, p2->ptr, p2->length);
+    lua_call(L, 2, 1);
+    int res = luaL_checkinteger(L, -1);
+    lua_pop(L, 1);
+    return res;
+}
+
+int _L_comp_ms(void* ud, slobj* p1, int p2) {
+    lua_State* L = (lua_State*) ud;
+    lua_pushvalue(L, -1);
+    lua_pushlstring(L, p1->ptr, p1->length);
+    lua_pushvalue(L, p2 + 2);
+    lua_call(L, 2, 1);
+    int res = luaL_checkinteger(L, -1);
+    lua_pop(L, 1);
+    return res;
+}
+
+int _L_comp_ss(void* ud, int p1, int p2) {
+    lua_State* L = (lua_State*) ud;
+    lua_pushvalue(L, -1);
+    lua_pushvalue(L, p1 + 1);
+    lua_pushvalue(L, p2 + 2);
+    lua_call(L, 2, 1);
+    int res = luaL_checkinteger(L, -1);
+    lua_pop(L, 1);
+    return res;
+}
+
 static int
 _insert(lua_State *L) {
     skiplist *sl = _to_skiplist(L);
-    double score = luaL_checknumber(L, 2);
-    luaL_checktype(L, 3, LUA_TSTRING);
+    luaL_checktype(L, 2, LUA_TSTRING);
     size_t len;
-    const char* ptr = lua_tolstring(L, 3, &len);
+    const char* ptr = lua_tolstring(L, 2, &len);
     slobj *obj = slCreateObj(ptr, len);
-    slInsert(sl, score, obj);
+
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    lua_pushvalue(L, 3);
+    slInsert(sl, obj, _L_comp_mm, L);
+    lua_pop(L, 1);
     return 0;
 }
 
 static int
 _delete(lua_State *L) {
     skiplist *sl = _to_skiplist(L);
-    double score = luaL_checknumber(L, 2);
-    luaL_checktype(L, 3, LUA_TSTRING);
+    luaL_checktype(L, 2, LUA_TSTRING);
     slobj obj;
-    obj.ptr = (char *)lua_tolstring(L, 3, &obj.length);
-    lua_pushboolean(L, slDelete(sl, score, &obj));
+    obj.ptr = (char *)lua_tolstring(L, 2, &obj.length);
+
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    lua_pushvalue(L, 3);
+    int res = slDelete(sl, &obj, _L_comp_mm, L);
+    lua_pop(L, 1);
+    lua_pushboolean(L, res);
     return 1;
 }
 
@@ -76,12 +117,13 @@ _get_count(lua_State *L) {
 static int
 _get_rank(lua_State *L) {
     skiplist *sl = _to_skiplist(L);
-    double score = luaL_checknumber(L, 2);
-    luaL_checktype(L, 3, LUA_TSTRING);
+    luaL_checktype(L, 2, LUA_TSTRING);
     slobj obj;
-    obj.ptr = (char *)lua_tolstring(L, 3, &obj.length);
-
-    unsigned long rank = slGetRank(sl, score, &obj);
+    obj.ptr = (char *)lua_tolstring(L, 2, &obj.length);
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+    lua_pushvalue(L, 3);
+    unsigned long rank = slGetRank(sl, &obj, _L_comp_mm, L);
+    lua_pop(L, 1);
     if(rank == 0) {
         return 0;
     }
@@ -114,41 +156,51 @@ _get_rank_range(lua_State *L) {
         lua_pushlstring(L, node->obj->ptr, node->obj->length);
         lua_rawseti(L, -2, n);
         node = reverse? node->backward : node->level[0].forward;
-    } 
+    }
     return 1;
 }
 
 static int
 _get_score_range(lua_State *L) {
     skiplist *sl = _to_skiplist(L);
-    double s1 = luaL_checknumber(L, 2);
-    double s2 = luaL_checknumber(L, 3);
-    int reverse; 
-    skiplistNode *node;
+    int s1_index = 2;
+    int s2_index = 3;
+    int reverse = luaL_checkinteger(L, 4);
+    luaL_checktype(L, 5, LUA_TFUNCTION);
 
-    if(s1 <= s2) {
-        reverse = 0;
-        node = slFirstInRange(sl, s1, s2);
+    lua_pushvalue(L, 5);
+    s1_index += 1;
+    s2_index += 1;
+    skiplistNode *node;
+    if(reverse == 0) {
+        node = slFirstInRange(sl, s1_index, s2_index, _L_comp_ms, L);
     } else {
-        reverse = 1;
-        node = slLastInRange(sl, s2, s1);
+        node = slLastInRange(sl, s2_index, s1_index, _L_comp_ms, L);
     }
+    lua_pop(L, 1);
+    s1_index -= 1;
+    s2_index -= 1;
+
 
     lua_newtable(L);
+    lua_pushvalue(L, 6);
+    s1_index += 2;
+    s2_index += 2;
     int n = 0;
     while(node) {
         if(reverse) {
-            if(node->score < s2) break;
+            if(_L_comp_ms(L, node->obj, s2_index) == LT) break;
         } else {
-            if(node->score > s2) break;
+            if(_L_comp_ms(L, node->obj, s2_index) == GT) break;
         }
         n++;
 
         lua_pushlstring(L, node->obj->ptr, node->obj->length);
-        lua_rawseti(L, -2, n);
+        lua_rawseti(L, -3, n);
 
-        node = reverse? node->backward:node->level[0].forward;
+        node = reverse ? node->backward:node->level[0].forward;
     }
+    lua_pop(L, 1);
     return 1;
 }
 

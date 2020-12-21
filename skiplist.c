@@ -12,9 +12,8 @@
 #include "skiplist.h"
 
 
-skiplistNode *slCreateNode(int level, double score, slobj *obj) {
+skiplistNode *slCreateNode(int level, slobj *obj) {
     skiplistNode *n = malloc(sizeof(*n) + level * sizeof(struct skiplistLevel));
-    n->score = score;
     n->obj   = obj;
     return n;
 }
@@ -26,7 +25,7 @@ skiplist *slCreate(void) {
     sl = malloc(sizeof(*sl));
     sl->level = 1;
     sl->length = 0;
-    sl->header = slCreateNode(SKIPLIST_MAXLEVEL, 0, NULL);
+    sl->header = slCreateNode(SKIPLIST_MAXLEVEL, NULL);
     for (j=0; j < SKIPLIST_MAXLEVEL; j++) {
         sl->header->level[j].forward = NULL;
         sl->header->level[j].span = 0;
@@ -88,7 +87,7 @@ int equalslObj(slobj *a, slobj *b) {
     return compareslObj(a, b) == 0;
 }
 
-void slInsert(skiplist *sl, double score, slobj *obj) {
+void slInsert(skiplist *sl, slobj *obj, comp_mm comp, void* ud) {
     skiplistNode *update[SKIPLIST_MAXLEVEL], *x;
     unsigned int rank[SKIPLIST_MAXLEVEL];
     int i, level;
@@ -98,8 +97,8 @@ void slInsert(skiplist *sl, double score, slobj *obj) {
         /* store rank that is crossed to reach the insert position */
         rank[i] = i == (sl->level-1) ? 0 : rank[i+1];
         while (x->level[i].forward &&
-            (x->level[i].forward->score < score ||
-                (x->level[i].forward->score == score &&
+            (comp(ud, x->level[i].forward->obj, obj) == LT ||
+                (comp(ud, x->level[i].forward->obj, obj) == EQ &&
                 compareslObj(x->level[i].forward->obj,obj) < 0))) {
             rank[i] += x->level[i].span;
             x = x->level[i].forward;
@@ -119,7 +118,7 @@ void slInsert(skiplist *sl, double score, slobj *obj) {
         }
         sl->level = level;
     }
-    x = slCreateNode(level,score,obj);
+    x = slCreateNode(level, obj);
     for (i = 0; i < level; i++) {
         x->level[i].forward = update[i]->level[i].forward;
         update[i]->level[i].forward = x;
@@ -164,15 +163,15 @@ void slDeleteNode(skiplist *sl, skiplistNode *x, skiplistNode **update) {
 }
 
 /* Delete an element with matching score/object from the skiplist. */
-int slDelete(skiplist *sl, double score, slobj *obj) {
+int slDelete(skiplist *sl, slobj *obj, comp_mm comp, void* ud) {
     skiplistNode *update[SKIPLIST_MAXLEVEL], *x;
     int i;
 
     x = sl->header;
     for (i = sl->level-1; i >= 0; i--) {
         while (x->level[i].forward &&
-            (x->level[i].forward->score < score ||
-                (x->level[i].forward->score == score &&
+            (comp(ud, x->level[i].forward->obj, obj) == LT ||
+                (comp(ud, x->level[i].forward->obj, obj) == EQ &&
                 compareslObj(x->level[i].forward->obj,obj) < 0)))
             x = x->level[i].forward;
         update[i] = x;
@@ -180,7 +179,7 @@ int slDelete(skiplist *sl, double score, slobj *obj) {
     /* We may have multiple elements with the same score, what we need
      * is to find the element with both the right score and object. */
     x = x->level[0].forward;
-    if (x && score == x->score && equalslObj(x->obj,obj)) {
+    if (x && comp(ud, obj, x->obj) == EQ && equalslObj(x->obj, obj)) {
         slDeleteNode(sl, x, update);
         slFreeNode(x);
         return 1;
@@ -224,7 +223,7 @@ unsigned long slDeleteByRank(skiplist *sl, unsigned int start, unsigned int end,
  * Returns 0 when the element cannot be found, rank otherwise.
  * Note that the rank is 1-based due to the span of sl->header to the
  * first element. */
-unsigned long slGetRank(skiplist *sl, double score, slobj *o) {
+unsigned long slGetRank(skiplist *sl, slobj *o, comp_mm comp, void* ud) {
     skiplistNode *x;
     unsigned long rank = 0;
     int i;
@@ -232,8 +231,8 @@ unsigned long slGetRank(skiplist *sl, double score, slobj *o) {
     x = sl->header;
     for (i = sl->level-1; i >= 0; i--) {
         while (x->level[i].forward &&
-            (x->level[i].forward->score < score ||
-                (x->level[i].forward->score == score &&
+            (comp(ud, x->level[i].forward->obj, o) == LT ||
+                (comp(ud, x->level[i].forward->obj, o) == EQ &&
                 compareslObj(x->level[i].forward->obj,o) <= 0))) {
             rank += x->level[i].span;
             x = x->level[i].forward;
@@ -274,36 +273,32 @@ skiplistNode* slGetNodeByRank(skiplist *sl, unsigned long rank) {
 
 /* range [min, max], left & right both include */
 /* Returns if there is a part of the zset is in range. */
-int slIsInRange(skiplist *sl, double min, double max) {
+int slIsInRange(skiplist *sl, int min_index, double max_index, comp_ms comp, void* ud) {
     skiplistNode *x;
 
-    /* Test for ranges that will always be empty. */
-    if(min > max) {
-        return 0;
-    }
     x = sl->tail;
-    if (x == NULL || x->score < min)
+    if (x == NULL || comp(ud, x->obj, min_index) == LT)
         return 0;
 
     x = sl->header->level[0].forward;
-    if (x == NULL || x->score > max)
+    if (x == NULL || comp(ud, x->obj, max_index) == GT)
         return 0;
     return 1;
 }
 
 /* Find the first node that is contained in the specified range.
  * Returns NULL when no element is contained in the range. */
-skiplistNode *slFirstInRange(skiplist *sl, double min, double max) {
+skiplistNode *slFirstInRange(skiplist *sl, int min_index, int max_index, comp_ms comp, void* ud) {
     skiplistNode *x;
     int i;
 
     /* If everything is out of range, return early. */
-    if (!slIsInRange(sl,min, max)) return NULL;
+    if (!slIsInRange(sl, min_index, max_index, comp, ud)) return NULL;
 
     x = sl->header;
     for (i = sl->level-1; i >= 0; i--) {
         /* Go forward while *OUT* of range. */
-        while (x->level[i].forward && x->level[i].forward->score < min)
+        while (x->level[i].forward && comp(ud, x->level[i].forward->obj, min_index) == LT)
                 x = x->level[i].forward;
     }
 
@@ -314,18 +309,18 @@ skiplistNode *slFirstInRange(skiplist *sl, double min, double max) {
 
 /* Find the last node that is contained in the specified range.
  * Returns NULL when no element is contained in the range. */
-skiplistNode *slLastInRange(skiplist *sl, double min, double max) {
+skiplistNode *slLastInRange(skiplist *sl, int min_index, int max_index, comp_ms comp, void* ud) {
     skiplistNode *x;
     int i;
 
     /* If everything is out of range, return early. */
-    if (!slIsInRange(sl, min, max)) return NULL;
+    if (!slIsInRange(sl, min_index, max_index, comp, ud)) return NULL;
 
     x = sl->header;
     for (i = sl->level-1; i >= 0; i--) {
         /* Go forward while *IN* range. */
         while (x->level[i].forward &&
-            x->level[i].forward->score <= max)
+            comp(ud, x->level[i].forward->obj, max_index) != GT)
                 x = x->level[i].forward;
     }
 
@@ -342,7 +337,7 @@ void slDump(skiplist *sl) {
     while(x->level[0].forward) {
         x = x->level[0].forward;
         i++;
-        printf("node %d: score:%f, member:%s\n", i, x->score, x->obj->ptr);
+        printf("node %d: member:%s\n", i, x->obj->ptr);
     }
 }
 

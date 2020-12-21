@@ -2,23 +2,69 @@ local skiplist = require "skiplist.c"
 local mt = {}
 mt.__index = mt
 
+------------------------------------------------------------------------
+local RES = { GT = 1, EQ = 0, LT = -1 }
+local PARAMS = { MM = 1, MS = 2, SS = 3 }
+
+function mt.__default_comp(s1, s2)
+    if not (type(s1) == "number" and type(s2) == "number") then
+        s1 = tostring(s1)
+        s2 = tostring(s2)
+    end
+    if s1 > s2 then
+        return RES.GT
+    elseif s1 == s2 then
+        return RES.GT
+    else
+        return RES.LT
+    end
+end
+
+function mt:_get_comp(param)
+    if param == PARAMS.MM then
+        return function (m1, m2)
+            assert(self.tbl[m1] and self.tbl[m2], "compare member but member dont exist")
+            local s1 = self.tbl[m1]
+            local s2 = self.tbl[m2]
+            return self:_get_comp(PARAMS.SS)(s1, s2)
+        end
+    elseif param == PARAMS.MS then
+        return function (m1, s2)
+            assert(self.tbl[m1], "compare member and score but member dont exist")
+            local s1 = self.tbl[m1]
+            return self:_get_comp(PARAMS.SS)(s1, s2)
+        end
+    elseif param == PARAMS.SS then
+        return function (s1, s2)
+            local comp = self.comp or self.__default_comp
+            return comp(s1, s2)
+        end
+    end
+end
+
+function  mt:set_comp(comp)
+    self.comp = comp
+end
+------------------------------------------------------------------------
 function mt:add(score, member)
     local old = self.tbl[member]
     if old then
-        if old == score then
+        local comp = self:_get_comp(PARAMS.SS)
+        if comp(old, score) == RES.EQ then
             return
         end
-        self.sl:delete(old, member)
+        self.sl:delete(member, self:_get_comp(PARAMS.MM))
     end
 
-    self.sl:insert(score, member)
     self.tbl[member] = score
+    local comp = self:_get_comp(PARAMS.MM)
+    self.sl:insert(member, comp)
 end
 
 function mt:rem(member)
     local score = self.tbl[member]
     if score then
-        self.sl:delete(score, member)
+        self.sl:delete(member, self:_get_comp(PARAMS.MM))
         self.tbl[member] = nil
     end
 end
@@ -95,11 +141,19 @@ function mt:rank(member)
     if not score then
         return nil
     end
-    return self.sl:get_rank(score, member)
+    return self.sl:get_rank(member, self:_get_comp(PARAMS.MM))
 end
 
 function mt:range_by_score(s1, s2)
-    return self.sl:get_score_range(s1, s2)
+    local comp_ss = self:_get_comp(PARAMS.SS)
+    local reverse
+    if comp_ss(s1, s2) == RES.GT then
+        reverse = 1
+    else
+        reverse = 0
+    end
+
+    return self.sl:get_score_range(s1, s2, reverse, self:_get_comp(PARAMS.MS))
 end
 
 function mt:score(member)
@@ -126,6 +180,7 @@ function M.new()
     local obj = {}
     obj.sl = skiplist()
     obj.tbl = {}
+    obj.comp = false
     return setmetatable(obj, mt)
 end
 return M
