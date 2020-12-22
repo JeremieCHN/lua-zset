@@ -1,6 +1,7 @@
 local c = require "skiplist.c"
 
 local sl = c()
+sl:set_score_count(1)
 
 local total = 500000
 for i=1, total do
