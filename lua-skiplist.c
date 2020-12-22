@@ -19,26 +19,52 @@ _to_skiplist(lua_State *L) {
     return *sl;
 }
 
+static double*
+_get_score_list(lua_State *L, int index) {
+    int score_count = luaL_len(L, index);
+    double *score_list = malloc(sizeof(double) * score_count);
+    for (int i = 1; i <= score_count; i++) {
+        int score_type = lua_geti(L, index, i);
+        if (score_type != LUA_TNUMBER) {
+            luaL_error(L, "score list must be number list");
+            return NULL;
+        }
+        score_list[i - 1] = luaL_checknumber(L, -1);
+        lua_pop(L, 1);
+    }
+    return score_list;
+}
+
+static int
+_set_score_count(lua_State *L) {
+    skiplist *sl = _to_skiplist(L);
+    int score_count = luaL_checkinteger(L, 2);
+    sl->score_count = score_count;
+    return 0;
+}
+
 static int
 _insert(lua_State *L) {
     skiplist *sl = _to_skiplist(L);
-    double score = luaL_checknumber(L, 2);
+    double* score_list = _get_score_list(L, 2);
     luaL_checktype(L, 3, LUA_TSTRING);
     size_t len;
     const char* ptr = lua_tolstring(L, 3, &len);
     slobj *obj = slCreateObj(ptr, len);
-    slInsert(sl, score, obj);
+    slInsert(sl, score_list, obj);
+    free(score_list);
     return 0;
 }
 
 static int
 _delete(lua_State *L) {
     skiplist *sl = _to_skiplist(L);
-    double score = luaL_checknumber(L, 2);
+    double* score_list = _get_score_list(L, 2);
     luaL_checktype(L, 3, LUA_TSTRING);
     slobj obj;
     obj.ptr = (char *)lua_tolstring(L, 3, &obj.length);
-    lua_pushboolean(L, slDelete(sl, score, &obj));
+    lua_pushboolean(L, slDelete(sl, score_list, &obj));
+    free(score_list);
     return 1;
 }
 
@@ -76,7 +102,7 @@ _get_count(lua_State *L) {
 static int
 _get_rank(lua_State *L) {
     skiplist *sl = _to_skiplist(L);
-    double score = luaL_checknumber(L, 2);
+    double* score = _get_score_list(L, 2);
     luaL_checktype(L, 3, LUA_TSTRING);
     slobj obj;
     obj.ptr = (char *)lua_tolstring(L, 3, &obj.length);
@@ -88,6 +114,7 @@ _get_rank(lua_State *L) {
 
     lua_pushinteger(L, rank);
 
+    free(score);
     return 1;
 }
 
@@ -114,16 +141,16 @@ _get_rank_range(lua_State *L) {
         lua_pushlstring(L, node->obj->ptr, node->obj->length);
         lua_rawseti(L, -2, n);
         node = reverse? node->backward : node->level[0].forward;
-    } 
+    }
     return 1;
 }
 
 static int
 _get_score_range(lua_State *L) {
     skiplist *sl = _to_skiplist(L);
-    double s1 = luaL_checknumber(L, 2);
-    double s2 = luaL_checknumber(L, 3);
-    int reverse; 
+    double* s1 = _get_score_list(L, 2);
+    double* s2 = _get_score_list(L, 3);
+    int reverse;
     skiplistNode *node;
 
     if(s1 <= s2) {
@@ -137,10 +164,11 @@ _get_score_range(lua_State *L) {
     lua_newtable(L);
     int n = 0;
     while(node) {
+        int cmp_res = score_comp(node->score, s2, sl->score_count);
         if(reverse) {
-            if(node->score < s2) break;
+            if(cmp_res == LT) break;
         } else {
-            if(node->score > s2) break;
+            if(cmp_res == GT) break;
         }
         n++;
 
@@ -149,6 +177,9 @@ _get_score_range(lua_State *L) {
 
         node = reverse? node->backward:node->level[0].forward;
     }
+
+    free(s1);
+    free(s2);
     return 1;
 }
 
@@ -196,6 +227,7 @@ int luaopen_skiplist_c(lua_State *L) {
 #endif
 
     luaL_Reg l[] = {
+        {"set_score_count", _set_score_count},
         {"insert", _insert},
         {"delete", _delete},
         {"delete_by_rank", _delete_by_rank},

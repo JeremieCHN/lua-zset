@@ -4,6 +4,10 @@
 #define SKIPLIST_MAXLEVEL 32
 #define SKIPLIST_P 0.25
 
+#define GT 1
+#define EQ 0
+#define LT -1
+
 typedef struct slobj {
     char *ptr;
     size_t length;
@@ -11,7 +15,7 @@ typedef struct slobj {
 
 typedef struct skiplistNode {
     slobj* obj;
-    double score;
+    double* score;
     struct skiplistNode *backward;
     struct skiplistLevel {
         struct skiplistNode *forward;
@@ -23,6 +27,7 @@ typedef struct skiplist {
     struct skiplistNode *header, *tail;
     unsigned long length;
     int level;
+    int score_count;
 } skiplist;
 
 typedef void (*slDeleteCb) (void *ud, slobj *obj);
@@ -33,13 +38,14 @@ skiplist *slCreate(void);
 void slFree(skiplist *sl);
 void slDump(skiplist *sl);
 
-void slInsert(skiplist *sl, double score, slobj *obj);
-int slDelete(skiplist *sl, double score, slobj *obj);
+int score_comp(double* score1, double* score2, int score_count);
+void slInsert(skiplist *sl, double* score, slobj *obj);
+int slDelete(skiplist *sl, double* score, slobj *obj);
 unsigned long slDeleteByRank(skiplist *sl, unsigned int start, unsigned int end, slDeleteCb cb, void* ud);
 
-unsigned long slGetRank(skiplist *sl, double score, slobj *o);
+unsigned long slGetRank(skiplist *sl, double* score, slobj *o);
 skiplistNode* slGetNodeByRank(skiplist *sl, unsigned long rank);
 
-skiplistNode *slFirstInRange(skiplist *sl, double min, double max);
-skiplistNode *slLastInRange(skiplist *sl, double min, double max);
+skiplistNode *slFirstInRange(skiplist *sl, double* min, double* max);
+skiplistNode *slLastInRange(skiplist *sl, double* min, double* max);
 

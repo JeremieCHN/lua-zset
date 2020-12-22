@@ -2,10 +2,54 @@ local skiplist = require "skiplist.c"
 local mt = {}
 mt.__index = mt
 
+local function is_eq(s1, s2)
+    for i in ipairs(s1) do
+        if s1[i] ~= s2[i] then
+            return false
+        end
+    end
+    return true
+end
+
+-- final return score as a number list
+function mt:check_score(score)
+    if not self.score_type then
+        if type(score) == "number" then
+            self.score_type = "number"
+            self.sl:set_score_count(1)
+            return { score }
+        elseif type(score) == "table" then
+            self.score_type = string.format("list_%s", #score)
+            self.sl:set_score_count(#score)
+            return score
+        else
+            error("score should be number or number list")
+        end
+    else
+        if type(score) == "number" then
+            if self.score_type == "number" then
+                return { score }
+            else
+                error("score should be number")
+            end
+        elseif type(score) == "table" then
+            local score_type = string.format("list_%s", #score)
+            if self.score_type == score_type then
+                return score
+            else
+                error("score as a number list but length not match")
+            end
+        else
+            error("score should be number or number list")
+        end
+    end
+end
+
 function mt:add(score, member)
+    score = self:check_score(score)
     local old = self.tbl[member]
     if old then
-        if old == score then
+        if is_eq(old, score) then
             return
         end
         self.sl:delete(old, member)
@@ -99,6 +143,8 @@ function mt:rank(member)
 end
 
 function mt:range_by_score(s1, s2)
+    s1 = self:check_score(s1)
+    s2 = self:check_score(s2)
     return self.sl:get_score_range(s1, s2)
 end
 
@@ -126,6 +172,7 @@ function M.new()
     local obj = {}
     obj.sl = skiplist()
     obj.tbl = {}
+    obj.score_type = false -- number | list_n (n is the length of a score list)
     return setmetatable(obj, mt)
 end
 return M
